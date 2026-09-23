@@ -24,11 +24,18 @@ def main():
         wb = load_workbook(Path(folder) / '作业统计.xlsx')
         try:
             rows = list(wb['提交统计'].values)
-            assert rows[0] == ('姓名', '学号', '第1周', '第2周', '第3周', '第4周', '已交周数', '备注')
+            assert rows[0] == ('姓名', '学号', '第3周', '第4周', '已交周数', '备注')
             assert len(rows) == 3
-            assert rows[1][0:7] == (name, sid, None, None, '已交', '已交', 2)
-            assert rows[2][4:6] == (None, None)
+            assert rows[1][0:5] == (name, sid, '已交', '已交', 2)
+            assert rows[2][2:4] == (None, None)
             assert wb['邮件明细'].max_row == 4
+        finally:
+            wb.close()
+        export_excel(Path(folder), state, roster, 6)
+        export_excel(Path(folder), state, roster, 7)
+        wb = load_workbook(Path(folder) / '作业统计.xlsx')
+        try:
+            assert list(wb['提交统计'].values)[0] == ('姓名', '学号', '第3周', '第4周', '第6周', '第7周', '已交周数', '备注')
         finally:
             wb.close()
     print('验证通过：名单完整、跨周保留、重复提交去重、未交单元格留空。')

@@ -164,13 +164,24 @@ def read_roster(roster):
 
 
 def export_excel(root, state, roster=None, assignment=None):
-    from openpyxl import Workbook
+    from openpyxl import Workbook, load_workbook
     from openpyxl.styles import Font, PatternFill
     records = list(state.values())
     students = read_roster(roster) if roster else {}
     roster_ids = set(students)
     known_weeks = {r['number'] for r in records if r['number']} | ({assignment} if assignment else set())
-    numbers = list(range(1, max(known_weeks, default=0) + 1))
+    # 保留之前已建立的周列，包括已布置但尚无人提交的周次。
+    existing_path = root / '作业统计.xlsx'
+    if existing_path.exists():
+        previous = load_workbook(existing_path, read_only=True, data_only=True)
+        try:
+            for cell in next(previous['提交统计'].iter_rows(max_row=1)):
+                match = re.fullmatch(r'第(\d+)周(?:作业)?', str(cell.value))
+                if match:
+                    known_weeks.add(int(match.group(1)))
+        finally:
+            previous.close()
+    numbers = sorted(known_weeks)
     for r in records:
         if r['sid']:
             students.setdefault(r['sid'], r['name'])
