@@ -1,0 +1,21 @@
+# 默认不纳入本地文件；只开放可公开的源码、说明和网页。
+# 新增源码时，在这里显式添加。不要使用 git add -f 添加私人数据。
+/*
+!/.gitignore
+!/README.md
+!/requirements.txt
+!/收作业.py
+!/生成网页.py
+!/网页模板.html
+!/收作业使用说明.md
+!/邮箱配置.example.ps1
+!/验证网页.py
+!/验证跨周统计.py
+!/.github/
+/.github/*
+!/.github/workflows/
+/.github/workflows/*
+!/.github/workflows/pages.yml
+!/site/
+/site/*
+!/site/index.html
