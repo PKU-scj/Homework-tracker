@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from openpyxl import load_workbook
+from 学号范围 import in_scope
 
 
 def build_site(excel, output, title='高等数学 B'):
@@ -21,7 +22,7 @@ def build_site(excel, output, title='高等数学 B'):
         weeks.sort(key=lambda item: item[1])
         students = []
         for row in rows:
-            if row[sid_col] is None:
+            if not in_scope(row[sid_col]):
                 continue
             students.append({'sid': str(row[sid_col]),
                              'submitted': [week for i, week in weeks if row[i] == '已交']})

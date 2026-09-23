@@ -17,8 +17,10 @@ class WebsiteTests(unittest.TestCase):
             ws.title = '提交统计'
             ws.append(['姓名', '学号', '第1周', '第2周', '第3周', '备注'])
             malicious = '</script><script>alert(1)</script>'
-            ws.append([malicious, '0123456789', '已交', None, '已交', 'PRIVATE_NOTE'])
-            ws.append(['另一同学', '1123456789', None, None, None, ''])
+            ws.append([malicious, '2600015447', '已交', None, '已交', 'PRIVATE_NOTE'])
+            ws.append(['另一同学', '2600015448', None, None, None, ''])
+            ws.append(['范围外', '2600015445', '已交', None, None, ''])
+            ws.append(['下限', '2600015446', '已交', None, None, ''])
             ws.append(['PRIVATE_STUDENT_NAME', malicious, None, None, None, ''])
             wb.create_sheet('邮件明细').append(['PRIVATE_EMAIL', 'PRIVATE_ATTACHMENT'])
             excel = root / 'stats.xlsx'
@@ -28,7 +30,8 @@ class WebsiteTests(unittest.TestCase):
             self.assertEqual(result['weeks'], [1, 2, 3])
             self.assertEqual(result['students'][0]['submitted'], [1, 3])
             self.assertEqual(result['students'][1]['submitted'], [])
-            self.assertEqual(result['students'][0]['sid'], '0123456789')
+            self.assertEqual(result['students'][0]['sid'], '2600015447')
+            self.assertEqual(len(result['students']), 2)
             html = (root / 'site/index.html').read_text(encoding='utf-8')
             self.assertNotIn(malicious, html)
             self.assertNotIn('PRIVATE_', html)

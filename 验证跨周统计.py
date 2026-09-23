@@ -6,20 +6,24 @@ from 收作业 import export_excel, read_roster
 
 
 def main():
-    sid, name = '0123456789', '示例甲'
+    sid, name = '2600015447', '示例甲'
     def record(week):
         return dict(number=week, sid=sid, name=name, status='已交', files=['附件.pdf'],
                     subject=f'第{week}周作业', sender='', date='')
     state = {'third': record(3), 'fourth': record(4), 'duplicate': record(3)}
+    state['below'] = dict(record(3), sid='2600015445')
+    state['boundary'] = dict(record(3), sid='2600015446')
     with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as folder:
         roster = Path(folder) / '名单.xlsx'
         source = Workbook()
         source.active.append(['学号', '姓名'])
         source.active.append([sid, name])
-        source.active.append(['1123456789', '示例乙'])
+        source.active.append(['2600015448', '示例乙'])
+        source.active.append(['2600015445', '范围外'])
+        source.active.append(['2600015446', '下限'])
         source.save(roster)
         source.close()
-        assert read_roster(roster) == {sid: name, '1123456789': '示例乙'}
+        assert read_roster(roster) == {sid: name, '2600015448': '示例乙'}
         export_excel(Path(folder), state, roster, 4)
         wb = load_workbook(Path(folder) / '作业统计.xlsx')
         try:
