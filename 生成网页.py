@@ -15,7 +15,7 @@ def build_site(excel, output, title='高等数学 B'):
     try:
         rows = iter(wb['提交统计'].values)
         headers = list(next(rows))
-        name_col, sid_col = headers.index('姓名'), headers.index('学号')
+        sid_col = headers.index('学号')
         weeks = [(i, int(m.group(1))) for i, h in enumerate(headers)
                  if (m := re.fullmatch(r'第(\d+)周(?:作业)?', str(h)))]
         weeks.sort(key=lambda item: item[1])
@@ -23,13 +23,13 @@ def build_site(excel, output, title='高等数学 B'):
         for row in rows:
             if row[sid_col] is None:
                 continue
-            students.append({'name': str(row[name_col] or ''), 'sid': str(row[sid_col]),
+            students.append({'sid': str(row[sid_col]),
                              'submitted': [week for i, week in weeks if row[i] == '已交']})
     finally:
         wb.close()
     data = {'updated': datetime.fromtimestamp(excel.stat().st_mtime).astimezone().isoformat(timespec='seconds'),
             'weeks': [week for _, week in weeks], 'students': students}
-    # 阻止姓名等内容提前关闭 script 标签；页面用 textContent 渲染数据。
+    # 阻止单元格内容提前关闭 script 标签；页面用 textContent 渲染数据。
     payload = json.dumps(data, ensure_ascii=False).replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e')
     template = Path(__file__).with_name('网页模板.html').read_text(encoding='utf-8')
     html = template.replace('__COURSE_TITLE__', escape(title)).replace('__HOMEWORK_DATA__', payload)

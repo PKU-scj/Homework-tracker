@@ -13,19 +13,19 @@
     .hero{display:flex;justify-content:space-between;align-items:center;gap:24px;margin-bottom:32px}.stamp{border:1px solid #d4dfd8;border-radius:12px;padding:14px 18px;font-size:12px;white-space:nowrap}.stamp time{display:block;margin-top:7px;font-weight:600}
     .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:24px}.stat{background:white;border:1px solid #e0e6df;border-radius:14px;padding:18px 22px}.stat span{display:block;color:#6b7b74;font-size:13px}.stat strong{display:block;font-size:28px;margin-top:7px;font-weight:650}
     .panel{background:white;border:1px solid #dde5df;border-radius:18px;overflow:hidden;box-shadow:0 8px 30px #19332e05}.toolbar{display:flex;align-items:end;gap:12px;padding:24px;border-bottom:1px solid #e7ece7;flex-wrap:wrap}.search{flex:1;min-width:200px}label{display:block;font-size:13px;font-weight:600;margin-bottom:9px}input,select,button{font:inherit;border-radius:9px;border:1px solid #ccd9d0;min-height:44px;padding:10px 12px;background:white;color:#19332e}input{width:100%}input:focus,select:focus,button:focus-visible{outline:3px solid #b9dfd0;outline-offset:2px;border-color:#17594e}button{cursor:pointer;background:#f3f7f3}button:hover{background:#e8f0e9}
-    .result-line{padding:16px 24px;font-size:13px;color:#66776f;display:flex;justify-content:space-between;gap:12px}.legend{color:#247159}.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#278566;margin-right:6px}.table-wrap{overflow:auto;max-height:65vh}table{border-collapse:separate;border-spacing:0;width:100%;text-align:left;white-space:nowrap;font-size:14px}th{font-weight:500;background:#f6f8f5;color:#697970;position:sticky;top:0;z-index:2}td,th{padding:17px 24px;border-bottom:1px solid #edf0eb}th:first-child,td:first-child{position:sticky;left:0;z-index:1;background:white;font-weight:600}th:first-child{background:#f6f8f5;z-index:3}td:nth-child(2){font-variant-numeric:tabular-nums;color:#77847d;font-size:13px}tbody tr:hover td{background:#f7faf6}.badge{display:inline-block;color:#196449;background:#e8f4ed;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600}.empty{text-align:center;padding:52px 20px;color:#738077}.note{font-size:12px;padding:16px 24px;background:#fbfcfa;border-top:1px solid #e7ece7}footer{font-size:12px;color:#859188;text-align:center;margin-top:26px;line-height:1.8}
+    .result-line{padding:16px 24px;font-size:13px;color:#66776f;display:flex;justify-content:space-between;gap:12px}.legend{color:#247159}.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#278566;margin-right:6px}.table-wrap{overflow:auto;max-height:65vh}table{border-collapse:separate;border-spacing:0;width:100%;text-align:left;white-space:nowrap;font-size:14px}th{font-weight:500;background:#f6f8f5;color:#697970;position:sticky;top:0;z-index:2}td,th{padding:17px 24px;border-bottom:1px solid #edf0eb}th:first-child,td:first-child{position:sticky;left:0;z-index:1;background:white;font-weight:600}th:first-child{background:#f6f8f5;z-index:3}td:first-child{font-variant-numeric:tabular-nums;color:#77847d;font-size:13px}tbody tr:hover td{background:#f7faf6}.badge{display:inline-block;color:#196449;background:#e8f4ed;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600}.empty{text-align:center;padding:52px 20px;color:#738077}.note{font-size:12px;padding:16px 24px;background:#fbfcfa;border-top:1px solid #e7ece7}footer{font-size:12px;color:#859188;text-align:center;margin-top:26px;line-height:1.8}
     @media(max-width:640px){main{padding:28px 14px}.hero{display:block;margin-bottom:22px}.stamp{display:inline-block;margin-top:12px}.stats{gap:8px}.stat{padding:14px 12px}.stat strong{font-size:24px}.stat span{font-size:12px}.toolbar{padding:18px;gap:10px}.search{flex-basis:100%}td,th{padding:15px 16px}.result-line{padding:14px 18px}.note{padding:14px 18px}h1{margin-top:12px}}
   </style>
 </head>
 <body>
 <main>
-  <header class="hero"><div><div class="eyebrow">__COURSE_TITLE__ · 课程作业</div><h1>每一周，都有记录。</h1><p>查询作业提交情况，按姓名或学号快速找到自己。</p></div><div class="stamp">统计更新时间<time id="updated">—</time></div></header>
+  <header class="hero"><div><div class="eyebrow">__COURSE_TITLE__ · 课程作业</div><h1>每一周，都有记录。</h1><p>查询作业提交情况，按学号快速找到自己的记录。</p></div><div class="stamp">统计更新时间<time id="updated">—</time></div></header>
   <section class="stats" aria-label="统计概览"><div class="stat"><span>统计人数</span><strong id="students">—</strong></div><div class="stat"><span>展示周数</span><strong id="weeks">—</strong></div><div class="stat"><span id="latest-label">最近一周已交</span><strong id="latest-count">—</strong></div></section>
   <section class="panel" aria-label="提交查询">
-    <div class="toolbar"><div class="search"><label for="query">查找同学</label><input id="query" type="search" placeholder="输入姓名或学号" autocomplete="off"></div><div><label for="week">查看周次</label><select id="week"><option value="">全部周次</option></select></div><button id="reset" type="button">重置</button></div>
+    <div class="toolbar"><div class="search"><label for="query">按学号查询</label><input id="query" type="search" placeholder="输入学号" autocomplete="off"></div><div><label for="week">查看周次</label><select id="week"><option value="">全部周次</option></select></div><button id="reset" type="button">重置</button></div>
     <div class="result-line"><span id="results" role="status" aria-live="polite"></span><span class="legend"><i class="dot"></i>已交</span></div>
     <div class="table-wrap" tabindex="0" role="region" aria-label="可横向滚动的跨周提交表"><table aria-label="作业提交统计"><thead id="head"></thead><tbody id="body"></tbody></table></div>
-    <div id="empty" class="empty" hidden>没有找到匹配的同学，请检查姓名或学号。</div>
+    <div id="empty" class="empty" hidden>没有找到匹配的同学，请检查学号。</div>
     <p class="note">已收取到有效附件的作业标为“已交”，其余留空。空白也可能表示尚未更新；结果以助教核对为准。</p>
   </section>
   <noscript><p>请启用浏览器 JavaScript 以查看和搜索提交记录。</p></noscript>
@@ -48,13 +48,13 @@
   function render() {
     const query = get('query').value.trim().toLocaleLowerCase();
     const weeks = get('week').value ? [Number(get('week').value)] : data.weeks;
-    const students = data.students.filter(s => s.name.toLocaleLowerCase().includes(query) || s.sid.includes(query));
+    const students = data.students.filter(s => s.sid.includes(query));
     const header = document.createElement('tr');
-    for (const title of ['姓名', '学号', ...weeks.map(w => `第${w}周`)]) header.append(cell('th', title));
+    for (const title of ['学号', ...weeks.map(w => `第${w}周`)]) header.append(cell('th', title));
     get('head').replaceChildren(header);
     const fragment = document.createDocumentFragment();
     for (const student of students) {
-      const row = document.createElement('tr'); row.append(cell('td', student.name), cell('td', student.sid));
+      const row = document.createElement('tr'); row.append(cell('td', student.sid));
       for (const week of weeks) { const td = cell('td', ''); if (student.submitted.includes(week)) { const badge = document.createElement('span'); badge.className = 'badge'; badge.textContent = '已交'; td.append(badge); } row.append(td); }
       fragment.append(row);
     }

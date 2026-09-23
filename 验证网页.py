@@ -19,6 +19,7 @@ class WebsiteTests(unittest.TestCase):
             malicious = '</script><script>alert(1)</script>'
             ws.append([malicious, '0123456789', '已交', None, '已交', 'PRIVATE_NOTE'])
             ws.append(['另一同学', '1123456789', None, None, None, ''])
+            ws.append(['PRIVATE_STUDENT_NAME', malicious, None, None, None, ''])
             wb.create_sheet('邮件明细').append(['PRIVATE_EMAIL', 'PRIVATE_ATTACHMENT'])
             excel = root / 'stats.xlsx'
             wb.save(excel)
@@ -31,6 +32,8 @@ class WebsiteTests(unittest.TestCase):
             html = (root / 'site/index.html').read_text(encoding='utf-8')
             self.assertNotIn(malicious, html)
             self.assertNotIn('PRIVATE_', html)
+            self.assertNotIn('另一同学', html)
+            self.assertTrue(all(set(student) == {'sid', 'submitted'} for student in result['students']))
             self.assertNotIn('__HOMEWORK_DATA__', html)
             self.assertNotIn('__COURSE_TITLE__', html)
             self.assertIn('&lt;示例课程&gt;', html)
