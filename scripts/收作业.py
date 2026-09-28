@@ -17,6 +17,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / '本地依赖'))
 
+from 学号范围 import in_scope
+
 
 def parse_subject(subject):
     subject = unicodedata.normalize("NFKC", subject).strip()
@@ -90,6 +92,8 @@ def collect(client, args, root, state):
             msg = BytesParser(policy=policy.default).parsebytes(raw)
             subject = str(msg.get('Subject', ''))
             parsed = parse_subject(subject)
+            if parsed and not in_scope(parsed[1]):
+                continue
             if not parsed and '作业' not in subject:
                 continue
             if parsed and args.assignment and parsed[0] != args.assignment:
@@ -208,6 +212,8 @@ def read_roster(roster):
         sid = str(int(value)) if isinstance(value, float) and value.is_integer() else str(value).strip()
         if not re.fullmatch(r'\d{10}', sid):
             raise ValueError(f'名单中的学号必须是10位：{sid}')
+        if not in_scope(sid):
+            continue
         name = str(row[name_col] or '').strip()
         if sid in students and students[sid] != name:
             raise ValueError(f'名单中同一学号对应多个姓名：{sid}')
@@ -218,7 +224,7 @@ def read_roster(roster):
 def export_excel(root, state, roster=None, assignment=None):
     from openpyxl import Workbook, load_workbook
     from openpyxl.styles import Font, PatternFill
-    records = list(state.values())
+    records = [r for r in state.values() if not r['sid'] or in_scope(r['sid'])]
     students = read_roster(roster) if roster else {}
     roster_ids = set(students)
     previous_submitted = set()
