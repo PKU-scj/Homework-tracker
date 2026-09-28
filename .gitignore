@@ -1,16 +1,25 @@
-# 默认不纳入本地文件；只开放可公开的源码、说明和网页。
-# 新增源码时，在这里显式添加。不要使用 git add -f 添加私人数据。
+# 默认忽略本地资料，只开放明确列出的项目文件。
 /*
 !/.gitignore
 !/README.md
 !/requirements.txt
-!/收作业.py
-!/生成网页.py
-!/网页模板.html
-!/收作业使用说明.md
+!/scripts/
+/scripts/*
+!/scripts/收作业.py
+!/scripts/回作业.py
+!/scripts/生成网页.py
+!/tests/
+/tests/*
+!/tests/验证网页.py
+!/tests/验证跨周统计.py
+!/templates/
+/templates/*
+!/templates/网页模板.html
 !/邮箱配置.example.ps1
-!/验证网页.py
-!/验证跨周统计.py
+!/docs/
+/docs/*
+!/docs/使用指南.md
+!/docs/收作业使用说明.md
 !/.github/
 /.github/*
 !/.github/workflows/

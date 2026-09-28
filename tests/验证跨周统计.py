@@ -1,6 +1,8 @@
 """离线验证：使用临时目录，不连接邮箱，不修改实际收取记录。"""
 import tempfile
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'scripts'))
 from openpyxl import Workbook, load_workbook
 from 收作业 import export_excel, read_roster
 
@@ -32,10 +34,14 @@ def main():
         finally:
             wb.close()
         export_excel(Path(folder), state, roster, 6)
-        export_excel(Path(folder), state, roster, 7)
+        export_excel(Path(folder), {'fourth': record(4)}, None, 7)
         wb = load_workbook(Path(folder) / '作业统计.xlsx')
         try:
             assert list(wb['提交统计'].values)[0] == ('姓名', '学号', '第3周', '第4周', '第6周', '第7周', '已交周数', '备注')
+            rows = list(wb['提交统计'].values)
+            assert len(rows) == 3
+            assert rows[1][2:4] == ('已交', '已交')
+            assert rows[2][0] == '示例乙'
         finally:
             wb.close()
     print('验证通过：名单完整、跨周保留、重复提交去重、未交单元格留空。')

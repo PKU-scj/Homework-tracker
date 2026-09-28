@@ -31,7 +31,7 @@ def build_site(excel, output, title='高等数学 B'):
             'weeks': [week for _, week in weeks], 'students': students}
     # 阻止单元格内容提前关闭 script 标签；页面用 textContent 渲染数据。
     payload = json.dumps(data, ensure_ascii=False).replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e')
-    template = Path(__file__).with_name('网页模板.html').read_text(encoding='utf-8')
+    template = (Path(__file__).resolve().parent.parent / 'templates' / '网页模板.html').read_text(encoding='utf-8')
     html = template.replace('__COURSE_TITLE__', escape(title)).replace('__HOMEWORK_DATA__', payload)
     output.mkdir(parents=True, exist_ok=True)
     target = output / 'index.html'
