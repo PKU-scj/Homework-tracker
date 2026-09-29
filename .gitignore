@@ -8,6 +8,7 @@
 !/scripts/收作业.py
 !/scripts/回作业.py
 !/scripts/生成网页.py
+!/scripts/整理学生邮箱.py
 !/tests/
 /tests/*
 !/tests/验证网页.py
