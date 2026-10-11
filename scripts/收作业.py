@@ -15,13 +15,20 @@ from email import policy
 from email.parser import BytesParser
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / '本地依赖'))
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / '本地依赖'))
 
 from 学号范围 import in_scope
+from 超大附件 import find_tasks, process_tasks, import_pdf, write_pending
 
 
 def parse_subject(subject):
     subject = unicodedata.normalize("NFKC", subject).strip()
+    subject = re.sub(r'(第\s*[0-9一二三四五六七八九十百零〇两]+\s*周)高数作业', r'\1作业', subject)
+    reverse = re.fullmatch(r'(第\s*[0-9一二三四五六七八九十百零〇两]+\s*周作业)\s+([^\d+\r\n]+?)\s+([0-9]{10})', subject)
+    if reverse:
+        subject = f'{reverse[1]}+{reverse[3]}+{reverse[2].strip()}'
     match = re.fullmatch(
         r"第\s*([0-9一二三四五六七八九十百零〇两]+)\s*周作业\s*[+_\-\s]*([0-9]{10})[+_\-\s]*([^+\r\n]+)", subject
     )
@@ -49,10 +56,24 @@ def safe_name(value):
     return value or "未命名"
 
 
+def subject_week(subject):
+    """识别周次以限定收取范围；主题其他字段不规范时仍可记录本周问题。"""
+    match = re.search(r'第\s*([0-9一二三四五六七八九十百零〇两]+)\s*周',
+                      unicodedata.normalize('NFKC', subject))
+    if match:
+        parsed = parse_subject(f'第{match[1]}周作业+0000000000+待核对')
+        return parsed[0] if parsed else None
+    return None
+
+
 def save_json(path, value):
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
     temporary.replace(path)
+
+
+def attachment_folder(root, record):
+    return root / f"第{record['number']}周作业" / safe_name(f"{record['sid']}_{record['name']}")
 
 
 def parse_since(value):
@@ -83,6 +104,16 @@ def collect(client, args, root, state):
     for uid in data[0].split():
         key = namespace + '|' + uid.decode()
         try:
+            if args.assignment:
+                status, response = client.uid('fetch', uid, '(BODY.PEEK[HEADER.FIELDS (SUBJECT)])')
+                if status != 'OK':
+                    raise RuntimeError('读取邮件主题失败')
+                headers = b''.join(item[1] for item in response if isinstance(item, tuple))
+                if not headers:
+                    raise RuntimeError('邮件主题响应为空')
+                header = BytesParser(policy=policy.default).parsebytes(headers)
+                if subject_week(str(header.get('Subject', ''))) != args.assignment:
+                    continue
             status, response = client.uid('fetch', uid, '(BODY.PEEK[])')
             if status != 'OK':
                 raise RuntimeError('读取邮件失败')
@@ -103,7 +134,7 @@ def collect(client, args, root, state):
             if parsed:
                 number, sid, name = parsed
                 record.update(number=number, sid=sid, name=name, status='无PDF附件')
-                folder = root / f'第{number}周作业' / safe_name(f'{sid}_{name}')
+                folder = attachment_folder(root, record)
                 # 使用邮件唯一标识和附件序号区分重交及同名附件。
                 token = hashlib.sha256(key.encode()).hexdigest()[:20]
                 for index, part in enumerate(msg.walk(), 1):
@@ -129,13 +160,20 @@ def collect(client, args, root, state):
                         temporary.write_bytes(payload)
                         temporary.replace(target)
                     record['files'].append(str(target.relative_to(root)))
-                if record['files']:
-                    record['status'] = '已交'
+                previous = state.get(key, {}).get('large_attachments', [])
+                discovered = find_tasks(msg, key)
+                tasks = {task['id']: dict(task) for task in previous
+                         if task['url'] or task.get('file') or not any(t['url'] for t in discovered)}
+                tasks.update({task['id']: task for task in discovered})
+                record['large_attachments'] = list(tasks.values())
+                process_tasks(root, record, folder, previous,
+                              timeout=args.large_timeout, max_bytes=args.large_max_mb * 1024 ** 2)
             state[key] = record
             save_json(root / '收取记录.json', state)
             print(f"[{record['status']}] {subject}")
         except (OSError, ValueError, RuntimeError, imaplib.IMAP4.error) as exc:
             print(f'[失败] 邮件 UID {uid.decode()}：{exc}；下次运行会重试')
+    write_pending(root, state)
 
 
 def pack_homework(root, state, assignment=None):
@@ -275,9 +313,11 @@ def export_excel(root, state, roster=None, assignment=None):
             notes.append('邮件姓名与名单或其他提交不一致')
         summary.append([name, sid] + marks + [marks.count('已交'), '；'.join(dict.fromkeys(notes))])
     detail = wb.create_sheet('邮件明细')
-    detail.append(['作业周次', '学号', '姓名', '状态', '邮件时间', '发件人', '主题', '附件数量', '附件相对路径'])
+    detail.append(['作业周次', '学号', '姓名', '状态', '邮件时间', '发件人', '主题', '附件数量', '附件相对路径', '超大附件待处理'])
     for r in records:
-        detail.append([r['number'], r['sid'], r['name'], r['status'], r['date'], r['sender'], r['subject'], len(r['files']), '\n'.join(r['files'])])
+        pending = '\n'.join(f"{task['id']}：{task['error']}" for task in r.get('large_attachments', [])
+                            if task['status'] != '已下载')
+        detail.append([r['number'], r['sid'], r['name'], r['status'], r['date'], r['sender'], r['subject'], len(r['files']), '\n'.join(r['files']), pending])
     for ws in wb:
         ws.freeze_panes = 'C2'
         ws.auto_filter.ref = ws.dimensions
@@ -309,13 +349,23 @@ def main():
     parser.add_argument('--since', type=parse_since, help='仅下载此收件日期及之后的邮件附件，格式 YYYY-MM-DD（含当天）；不清除本地历史记录')
     parser.add_argument('--export-only', action='store_true', help='不连接邮箱，只根据本地收取记录重新生成 Excel')
     parser.add_argument('--pack-only', action='store_true', help='仅将本地周作业文件夹打包为 ZIP，不登录邮箱、不修改统计')
+    parser.add_argument('--retry-large', action='store_true', help='仅重试本地记录中的超大附件，不登录邮箱；可配合 --assignment')
+    parser.add_argument('--import-large', nargs=2, metavar=('任务编号', 'PDF路径'), help='补录网页下载的超大附件，不登录邮箱，并更新 ZIP、Excel 和网页')
+    parser.add_argument('--large-timeout', type=int, default=120, help='超大附件单次网络读写超时秒数，默认120')
+    parser.add_argument('--large-max-mb', type=int, default=10240, help='单个超大附件大小上限 MB，默认10240')
     parser.add_argument('--web-output', default='site', help='查询网页输出目录，默认 site，供 push 后发布')
     parser.add_argument('--title', default='高等数学 B', help='网页课程名称')
     args = parser.parse_args()
     if args.assignment is not None and args.assignment <= 0:
         parser.error('--assignment 必须大于0')
-    if args.pack_only and args.export_only:
-        parser.error('--pack-only 与 --export-only 不能同时使用')
+    if sum(bool(mode) for mode in (args.pack_only, args.export_only, args.retry_large, args.import_large)) > 1:
+        parser.error('--pack-only、--export-only、--retry-large、--import-large 不能同时使用')
+    if args.large_timeout <= 0 or args.large_max_mb <= 0:
+        parser.error('--large-timeout 和 --large-max-mb 必须大于0')
+    if args.import_large and (args.assignment or args.since):
+        parser.error('--import-large 按任务编号定位，不与 --assignment 或 --since 同时使用')
+    if args.retry_large and args.since:
+        parser.error('--retry-large 使用本地任务，不与 --since 同时使用')
     try:
         if args.pack_only:
             root = Path(args.output).resolve()
@@ -325,7 +375,7 @@ def main():
             state = json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
             pack_homework(root, state, args.assignment)
             return
-        import openpyxl  # 下载之前检查依赖
+        from openpyxl import Workbook  # 下载之前检查依赖是否完整
         if not args.roster:
             candidates = [p for p in Path(__file__).resolve().parent.parent.glob('*选课名单*')
                           if p.suffix.lower() in ('.xls', '.xlsx') and not p.name.startswith('~$')]
@@ -339,7 +389,22 @@ def main():
         root.mkdir(parents=True, exist_ok=True)
         state_path = root / '收取记录.json'
         state = json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
-        if not args.export_only:
+        if args.import_large:
+            record = import_pdf(root, state, *args.import_large, attachment_folder)
+            save_json(state_path, state)
+            write_pending(root, state)
+            pack_homework(root, state, record['number'])
+            print(f"[补录完成] {record['subject']}")
+        elif args.retry_large:
+            for record in state.values():
+                if not record.get('large_attachments') or (args.assignment and record['number'] != args.assignment):
+                    continue
+                process_tasks(root, record, attachment_folder(root, record),
+                              timeout=args.large_timeout, max_bytes=args.large_max_mb * 1024 ** 2)
+                save_json(state_path, state)
+            write_pending(root, state)
+            pack_homework(root, state, args.assignment)
+        elif not args.export_only:
             args.email = args.email or input('收作业邮箱：').strip()
             code = os.getenv('HOMEWORK_AUTH_CODE') or getpass.getpass('邮箱 IMAP 授权码（输入不显示）：')
             with imaplib.IMAP4_SSL(args.server, args.port, ssl_context=ssl.create_default_context(), timeout=60) as client:

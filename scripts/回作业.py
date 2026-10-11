@@ -33,7 +33,7 @@ def load_config():
             if m:
                 os.environ.setdefault(m[1], m[2].replace("''", "'"))
     sender = os.getenv('HOMEWORK_EMAIL', '')
-    code = os.getenv('HOMEWORK_SMTP_AUTH_CODE') or os.getenv('HOMEWORK_AUTH_CODE', '')
+    code = os.getenv('HOMEWORK_AUTH_CODE', '')
     if not sender or not code:
         raise ValueError('请在本地邮箱配置中填写邮箱和授权码')
     return sender, code

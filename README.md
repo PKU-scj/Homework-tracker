@@ -29,6 +29,8 @@ site/             公开查询网页，上传 GitHub
 python scripts/收作业.py --since 2026-09-01 --assignment 3 --output 作业收集_2026秋
 ```
 
+兼容 QQ 邮箱超大附件：自动尝试下载正文中的中转站 PDF 链接；需要网页登录的项目列在本地 `超大附件待处理.txt`。支持 `--retry-large` 重试，以及 `--import-large "任务编号" "PDF路径"` 补录网页下载的文件并更新统计。具体用法见 [超大附件说明](docs/收作业使用说明.md#qq-邮箱超大附件)。
+
 只打包本地 PDF：
 
 ```powershell
@@ -52,6 +54,7 @@ python scripts/生成网页.py
 ```powershell
 python tests/验证跨周统计.py
 python tests/验证网页.py
+python tests/验证超大附件.py
 ```
 
 发布修改：
@@ -81,7 +84,7 @@ python scripts/回作业.py --week 3
 python scripts/回作业.py --week 3 --send
 ```
 
-自动读取根目录 `邮箱配置.local.ps1`，发件使用 `HOMEWORK_SMTP_AUTH_CODE`，没有单独设置时使用 `HOMEWORK_AUTH_CODE`。同一学生同一地址的 PDF 合并一封邮件，主题为“第3周作业批改”。其他周修改 `--week`，也可用 `--folder` 指定批改目录。
+自动读取根目录 `邮箱配置.local.ps1`，收作业和回作业统一使用 `HOMEWORK_AUTH_CODE` 中的 SMTP/IMAP 授权码，不再使用单独的 `HOMEWORK_SMTP_AUTH_CODE`。同一学生同一地址的 PDF 合并一封邮件，主题为“第3周作业批改”。其他周修改 `--week`，也可用 `--folder` 指定批改目录。
 
 `第3周返还清单.json` 保存匹配清单和待核对项，`第3周返还记录.json` 保存发送结果。重复运行跳过同一批附件的成功发送记录；网络中断导致“结果不确定”时也会跳过，应先查发件箱核实。修改附件或收件地址会视为新邮件。以上记录及批改文件不上传 GitHub，回作业不会修改提交统计。
 
