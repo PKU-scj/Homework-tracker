@@ -57,6 +57,8 @@ def make_plan(root, folder, week):
         wb.close()
     state = json.loads((root / '收取记录.json').read_text(encoding='utf-8'))
     origins = {hashlib.sha256(k.encode()).hexdigest()[:20]: r for k, r in state.items()}
+    rename_path = folder / '重命名记录.json'
+    renames = json.loads(rename_path.read_text(encoding='utf-8')) if rename_path.exists() else []
     groups = defaultdict(list)
     problems = []
     for path in sorted(folder.rglob('*')):
@@ -71,16 +73,18 @@ def make_plan(root, folder, week):
         if not path.name.startswith(f'{sid}_{name}_'):
             problems.append({'file': str(path), 'reason': '文件姓名与邮箱名单不一致'})
             continue
-        if '需确认' in notes:
-            problems.append({'file': str(path), 'reason': '邮箱表标记需确认：' + notes})
-            continue
-        tokens = re.findall(r'_([a-f0-9]{20})_', path.name)
+        original_name = str(path.relative_to(folder))
+        for rename in reversed(renames):
+            if rename.get('new') == original_name and rename.get('week') == week:
+                original_name = rename['old']
+        tokens = re.findall(r'_([a-f0-9]{20})_', Path(original_name).name)
         origin = origins.get(tokens[0]) if len(tokens) == 1 else None
         recipient = next(iter(emails)) if len(emails) == 1 else None
         basis = '邮箱表唯一地址'
         if origin:
             original_emails = addresses(origin.get('sender'))
-            if origin.get('sid') != sid or origin.get('number') != week or len(original_emails) != 1:
+            origin_name = re.sub(r'\s*[（(]\d+[）)]\s*$', '', origin.get('name', '')).strip()
+            if origin.get('sid') != sid or origin.get('number') != week or origin_name != name or len(original_emails) != 1:
                 problems.append({'file': str(path), 'reason': '原邮件标识与学生或周次不一致'})
                 continue
             original_email = next(iter(original_emails))
@@ -90,6 +94,12 @@ def make_plan(root, folder, week):
             if len(emails) > 1:
                 recipient = original_email
                 basis = '按附件原邮件标识匹配发件地址'
+            if '需确认' in notes and original_email not in emails:
+                problems.append({'file': str(path), 'reason': '原邮件发件地址与待核对邮箱表不一致'})
+                continue
+        if '需确认' in notes and (not origin or '邮箱关联多个学号' in notes):
+            problems.append({'file': str(path), 'reason': '邮箱表标记需确认：' + notes})
+            continue
         if not recipient:
             problems.append({'file': str(path), 'reason': '邮箱缺失或多邮箱无法确定'})
             continue
@@ -115,7 +125,8 @@ def message_for(item, sender):
     msg['To'] = item['recipient']
     msg['Subject'] = f"第{item['week']}周作业批改"
     msg['Date'] = formatdate(localtime=True)
-    msg['Message-ID'] = make_msgid()
+    # Windows 计算机名可能包含中文，不能直接写入 Message-ID。
+    msg['Message-ID'] = make_msgid(domain=sender.rsplit('@', 1)[-1])
     msg.set_content(f"{item['name']}同学你好：\n\n附件是你的第{item['week']}周作业批改，请查收。\n如有疑问，请直接回复这封邮件。\n\n祝好，\n孙谌劼")
     for entry in item['files']:
         content = Path(entry['path']).read_bytes()
@@ -148,7 +159,7 @@ def send_plan(plan, root, week, interval):
         try:
             msg = message_for(item, sender)
             raw = msg.as_bytes(policy=policy.SMTP)
-            server = smtplib.SMTP('smtp.qq.com', 587, timeout=90)
+            server = smtplib.SMTP('smtp.qq.com', 587, local_hostname='localhost', timeout=90)
             server.ehlo()
             server.starttls(context=ssl.create_default_context())
             server.ehlo()

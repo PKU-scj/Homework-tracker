@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'scripts'))
 import 超大附件 as large
-from 收作业 import collect, import_pdf, attachment_folder, export_excel, pack_homework, parse_subject, latest_submissions
+from 收作业 import collect, import_pdf, attachment_folder, export_excel, pack_homework, parse_subject, latest_submissions, has_submission
 
 
 ENTRY = 'https://mail.qq.com/cgi-bin/ftnExs_download?k=test&code=abc'
@@ -77,6 +77,12 @@ class IMAP:
 
 
 class LargeAttachmentTests(unittest.TestCase):
+    def test_submission_requires_valid_complete_subject(self):
+        record = dict(sid='2600015447', number=3, files=[], status='无PDF附件')
+        self.assertTrue(has_submission(dict(record,subject='第三周作业+2600015447+示例甲')))
+        for subject in ('【第三周作业+2600015447+示例甲】', '第三周作业示例甲2600015447', '第三周作业', '第四周作业+2600015447+示例甲'):
+            self.assertFalse(has_submission(dict(record,subject=subject)))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -382,7 +388,7 @@ class LargeAttachmentTests(unittest.TestCase):
         self.assertEqual(record['status'], '已交')
         self.assertEqual(record['large_attachments'], [])
 
-    def test_non_pdf_attachment_counts_but_empty_email_does_not(self):
+    def test_identified_email_counts_with_or_without_attachment(self):
         from openpyxl import load_workbook
         for attached in (False, True):
             msg = message('请查收作业')
@@ -392,8 +398,8 @@ class LargeAttachmentTests(unittest.TestCase):
             record = self.run_collect(msg, state)
             export_excel(self.root, state, assignment=3)
             wb = load_workbook(self.root / '作业统计.xlsx')
-            self.assertEqual(wb['提交统计'].cell(2, 3).value, '已交' if attached else None)
-            self.assertEqual(wb['收取异常'].cell(2, 4).value, '已交' if attached else '待核对')
+            self.assertEqual(wb['提交统计'].cell(2, 3).value, '已交')
+            self.assertEqual(wb['收取异常'].cell(2, 4).value, '已交')
             wb.close()
 
     def test_ordinary_attachment_write_failure_keeps_submission_evidence(self):

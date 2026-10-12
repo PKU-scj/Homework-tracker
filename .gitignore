@@ -7,6 +7,7 @@
 /scripts/*
 !/scripts/收作业.py
 !/scripts/回作业.py
+!/scripts/重命名批改作业.py
 !/scripts/生成网页.py
 !/scripts/整理学生邮箱.py
 !/scripts/超大附件.py

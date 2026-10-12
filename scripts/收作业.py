@@ -58,11 +58,10 @@ def safe_name(value):
 
 
 def has_submission(record):
-    """提交与下载结果分开：有附件提交证据即可计为已交。"""
-    return bool(record.get('sid') and record.get('number') and (
-        record.get('status') == '已交' or record.get('files')
-        or record.get('attachment_names') or record.get('large_attachments')
-        or record.get('status') == '超大附件待下载'))
+    """主题符合现有格式，且与记录的学生、周次一致，才计为已交。"""
+    parsed = parse_subject(record.get('subject', ''))
+    return bool(parsed and parsed[0] == record.get('number')
+                and parsed[1] == record.get('sid'))
 
 
 def legal_submission(record):
@@ -448,7 +447,7 @@ def export_excel(root, state, roster=None, assignment=None):
     wb.save(temporary)
     temporary.replace(destination)
     lines = ['作业收取异常记录（仅本地保存）',
-             '有附件提交证据即计为已交；下载失败、非 PDF 和无附件问题在此单独记录。',
+             '主题格式正确的作业邮件计为已交；附件问题单独记录，不影响打钩。',
              '以下为当前待处理项；重新导出时更新，已解决项不再列出。', '']
     for week, sid, name, mark, reason, subject, sent_at in issues:
         lines.extend([f'第{week}周 | {sid} {name} | {mark}',

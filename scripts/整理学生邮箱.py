@@ -1,4 +1,4 @@
-"""从本地收取记录整理学生邮箱，以作业统计为名单，不连接邮箱或发送邮件。"""
+"""从本地收取记录和统计表邮件明细整理学生邮箱，不连接邮箱或发送邮件。"""
 import argparse
 from collections import defaultdict
 from email.utils import getaddresses
@@ -42,13 +42,30 @@ def organize(root):
         headers = list(next(rows))
         students = {str(row[headers.index('学号')]).strip(): str(row[headers.index('姓名')] or '').strip()
                     for row in rows if row[headers.index('学号')] is not None}
+        historical = []
+        if '邮件明细' in source.sheetnames:
+            rows = iter(source['邮件明细'].values)
+            detail_headers = list(next(rows))
+            fields = {'学号': 'sid', '姓名': 'name', '作业周次': 'number',
+                      '主题': 'subject', '发件人': 'sender', '邮件时间': 'date', '状态': 'status'}
+            for row in rows:
+                detail = dict(zip(detail_headers, row))
+                record = {field: detail.get(header) or '' for header, field in fields.items()}
+                record['sid'] = str(record['sid']).strip()
+                if record['subject'] or record['sender']:
+                    historical.append(record)
     finally:
         source.close()
     state = json.loads((root / '收取记录.json').read_text(encoding='utf-8'))
     matches = defaultdict(list)
     unmatched = []
     details = []
-    for record in state.values():
+    seen = set()
+    for record in [*state.values(), *historical]:
+        identity = tuple(str(record.get(field) or '').strip() for field in ('subject', 'sender', 'date'))
+        if identity in seen:
+            continue
+        seen.add(identity)
         sid, method = match_student(record, students)
         addresses = sorted({addr.strip().lower() for _, addr in getaddresses([record.get('sender', '')])
                             if re.fullmatch(r'[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+', addr.strip())})

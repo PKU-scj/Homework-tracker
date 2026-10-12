@@ -11,7 +11,7 @@ def main():
     sid, name = '2600015447', '示例甲'
     def record(week):
         return dict(number=week, sid=sid, name=name, status='已交', files=['附件.pdf'],
-                    subject=f'第{week}周作业', sender='', date='')
+                    subject=f'第{week}周作业+{sid}+{name}', sender='', date='')
     state = {'third': record(3), 'fourth': record(4), 'duplicate': record(3)}
     state['below'] = dict(record(3), sid='2600015445')
     state['boundary'] = dict(record(3), sid='2600015446')
