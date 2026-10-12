@@ -10,9 +10,10 @@ import ssl
 import sys
 import unicodedata
 import zipfile
-from datetime import date
+from datetime import date, timezone
 from email import policy
 from email.parser import BytesParser
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -20,7 +21,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / '本地依赖'))
 
 from 学号范围 import in_scope
-from 超大附件 import find_tasks, process_tasks, import_pdf, write_pending
+from 超大附件 import find_tasks, process_tasks, import_pdf, write_pending as write_large_pending
 
 
 def parse_subject(subject):
@@ -54,6 +55,73 @@ def parse_subject(subject):
 def safe_name(value):
     value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', value).strip(' .')[:100]
     return value or "未命名"
+
+
+def has_submission(record):
+    """提交与下载结果分开：有附件提交证据即可计为已交。"""
+    return bool(record.get('sid') and record.get('number') and (
+        record.get('status') == '已交' or record.get('files')
+        or record.get('attachment_names') or record.get('large_attachments')
+        or record.get('status') == '超大附件待下载'))
+
+
+def legal_submission(record):
+    """下载失败不取消提交资格；已确认无 PDF 的提交不能覆盖旧版本。"""
+    if not record.get('sid') or not record.get('number') or not in_scope(record['sid']):
+        return False
+    if record.get('files') or record.get('pdf_attachment_names'):
+        return True
+    if 'pdf_attachment_names' not in record and any(
+            str(name).lower().endswith('.pdf') for name in record.get('attachment_names', [])):
+        return True
+    return any(not any(reason in task.get('error', '') for reason in
+                       ('不是 PDF', '缺少结束标记'))
+               for task in record.get('large_attachments', []))
+
+
+def submission_order(key, record):
+    try:
+        sent = parsedate_to_datetime(record.get('date', ''))
+        stamp = (sent if sent.tzinfo else sent.replace(tzinfo=timezone.utc)).timestamp()
+    except (TypeError, ValueError, OverflowError):
+        stamp = 0
+    uid = key.rsplit('|', 1)[-1]
+    return stamp, int(uid) if uid.isdigit() else -1, key
+
+
+def latest_submissions(state):
+    chosen = {}
+    for key, record in state.items():
+        if not legal_submission(record):
+            continue
+        group = (record['sid'], record['number'])
+        previous = chosen.get(group)
+        if previous is None or submission_order(key, record) > submission_order(previous, state[previous]):
+            chosen[group] = key
+    return set(chosen.values())
+
+
+def write_pending(root, state):
+    selected = latest_submissions(state)
+    write_large_pending(root, {key: record for key, record in state.items()
+                              if key in selected or not legal_submission(record)})
+
+
+def collection_issues(records):
+    issues = []
+    for record in records:
+        reasons = [task.get('error') or '超大附件尚未下载'
+                   for task in record.get('large_attachments', [])
+                   if task.get('status') != '已下载']
+        if record.get('collection_error'):
+            reasons.append(record['collection_error'])
+        if record.get('status') != '已交' and not reasons:
+            reasons.append(record.get('status') or '收取状态未知')
+        for reason in dict.fromkeys(reasons):
+            issues.append([record.get('number'), record.get('sid', ''), record.get('name', ''),
+                           '已交' if has_submission(record) else '待核对',
+                           reason, record.get('subject', ''), record.get('date', '')])
+    return issues
 
 
 def subject_week(subject):
@@ -101,19 +169,25 @@ def collect(client, args, root, state):
         status, data = client.uid('search', None, 'ALL')
     if status != 'OK':
         raise RuntimeError('搜索邮件失败')
+    queue = []
     for uid in data[0].split():
-        key = namespace + '|' + uid.decode()
         try:
-            if args.assignment:
-                status, response = client.uid('fetch', uid, '(BODY.PEEK[HEADER.FIELDS (SUBJECT)])')
-                if status != 'OK':
-                    raise RuntimeError('读取邮件主题失败')
-                headers = b''.join(item[1] for item in response if isinstance(item, tuple))
-                if not headers:
-                    raise RuntimeError('邮件主题响应为空')
-                header = BytesParser(policy=policy.default).parsebytes(headers)
-                if subject_week(str(header.get('Subject', ''))) != args.assignment:
-                    continue
+            status, response = client.uid('fetch', uid, '(BODY.PEEK[HEADER.FIELDS (SUBJECT DATE)])')
+            if status != 'OK':
+                raise RuntimeError('读取邮件主题失败')
+            headers = b''.join(item[1] for item in response if isinstance(item, tuple))
+            if not headers:
+                raise RuntimeError('邮件主题响应为空')
+            header = BytesParser(policy=policy.default).parsebytes(headers)
+            if args.assignment and subject_week(str(header.get('Subject', ''))) != args.assignment:
+                continue
+            queue.append((uid, {'date': str(header.get('Date', ''))}))
+        except (OSError, ValueError, RuntimeError, imaplib.IMAP4.error) as exc:
+            print(f'[失败] 邮件 UID {uid.decode()}：{exc}；下次运行会重试')
+    for uid, _ in sorted(queue, key=lambda item: submission_order(namespace + '|' + item[0].decode(), item[1]), reverse=True):
+        key = namespace + '|' + uid.decode()
+        record = None
+        try:
             status, response = client.uid('fetch', uid, '(BODY.PEEK[])')
             if status != 'OK':
                 raise RuntimeError('读取邮件失败')
@@ -134,6 +208,37 @@ def collect(client, args, root, state):
             if parsed:
                 number, sid, name = parsed
                 record.update(number=number, sid=sid, name=name, status='无PDF附件')
+                record['attachment_names'] = [part.get_filename() or '未命名附件'
+                                              for part in msg.walk() if not part.is_multipart()
+                                              and (part.get_filename() or part.get_content_disposition() == 'attachment')]
+                record['pdf_attachment_names'] = []
+                invalid_pdf = False
+                for part in msg.walk():
+                    filename = part.get_filename()
+                    if part.is_multipart() or not (filename or part.get_content_disposition() == 'attachment'):
+                        continue
+                    if (filename and Path(filename).suffix.lower() == '.pdf') or (not filename and part.get_content_type() == 'application/pdf'):
+                        payload = part.get_payload(decode=True) or b''
+                        if payload.lstrip().startswith(b'%PDF-') and b'%%EOF' in payload[-2048:]:
+                            record['pdf_attachment_names'].append(filename or '附件.pdf')
+                        else:
+                            invalid_pdf = True
+                previous = state.get(key, {}).get('large_attachments', [])
+                discovered = find_tasks(msg, key)
+                tasks = {task['id']: dict(task) for task in previous
+                         if task['url'] or task.get('file') or not any(t['url'] for t in discovered)}
+                tasks.update({task['id']: next((dict(old) for old in previous if old['id'] == task['id']), task)
+                              for task in discovered})
+                record['large_attachments'] = list(tasks.values())
+                if invalid_pdf:
+                    record['collection_error'] = '存在损坏的 PDF 附件（文件头或结束标记无效）'
+                candidates = {**state, key: record}
+                if key not in latest_submissions(candidates):
+                    # 旧附件保留为历史，不再下载，也不会加入本次作业包。
+                    record['files'] = state.get(key, {}).get('files', [])
+                    state[key] = record
+                    save_json(root / '收取记录.json', state)
+                    continue
                 folder = attachment_folder(root, record)
                 # 使用邮件唯一标识和附件序号区分重交及同名附件。
                 token = hashlib.sha256(key.encode()).hexdigest()[:20]
@@ -151,7 +256,7 @@ def collect(client, args, root, state):
                     else:
                         continue
                     payload = part.get_payload(decode=True)
-                    if payload is None:
+                    if payload is None or not payload.lstrip().startswith(b'%PDF-') or b'%%EOF' not in payload[-2048:]:
                         continue
                     folder.mkdir(parents=True, exist_ok=True)
                     target = folder / f'{token}_{index}_{safe_name(filename or "附件.bin")}'
@@ -160,18 +265,17 @@ def collect(client, args, root, state):
                         temporary.write_bytes(payload)
                         temporary.replace(target)
                     record['files'].append(str(target.relative_to(root)))
-                previous = state.get(key, {}).get('large_attachments', [])
-                discovered = find_tasks(msg, key)
-                tasks = {task['id']: dict(task) for task in previous
-                         if task['url'] or task.get('file') or not any(t['url'] for t in discovered)}
-                tasks.update({task['id']: task for task in discovered})
-                record['large_attachments'] = list(tasks.values())
                 process_tasks(root, record, folder, previous,
                               timeout=args.large_timeout, max_bytes=args.large_max_mb * 1024 ** 2)
             state[key] = record
             save_json(root / '收取记录.json', state)
             print(f"[{record['status']}] {subject}")
         except (OSError, ValueError, RuntimeError, imaplib.IMAP4.error) as exc:
+            if record and record.get('sid') and record.get('number'):
+                record.update(status='附件收取失败', collection_error=f'附件收取失败（{type(exc).__name__}），请重试或人工核对')
+                record['files'] = list(dict.fromkeys(state.get(key, {}).get('files', []) + record['files']))
+                state[key] = record
+                save_json(root / '收取记录.json', state)
             print(f'[失败] 邮件 UID {uid.decode()}：{exc}；下次运行会重试')
     write_pending(root, state)
 
@@ -184,16 +288,17 @@ def pack_homework(root, state, assignment=None):
         weeks.update(int(m.group(1)) for p in root.iterdir()
                      if p.is_dir() and (m := re.fullmatch(r'第(\d+)周作业', p.name)))
     archives = []
+    selected = latest_submissions(state)
     for week in sorted(weeks):
         folder = root / f'第{week}周作业'
-        expected = {p for r in state.values() if r['number'] == week for p in r['files'] if Path(p).suffix.lower() == '.pdf'}
+        expected = {p for key, r in state.items() if key in selected and r['number'] == week
+                    for p in r['files'] if Path(p).suffix.lower() == '.pdf'}
         missing = sum(not (root / p).is_file() for p in expected)
         if missing:
             print(f'[提醒] 第{week}周有 {missing} 个记录中的附件已不在本地，ZIP 仅包含当前存在的文件。')
-        files = sorted(p for p in folder.rglob('*') if p.is_file() and p.suffix.lower() == '.pdf') if folder.exists() else []
+        files = sorted(root / p for p in expected if (root / p).is_file())
         if not files:
-            print(f'[跳过] 第{week}周没有可打包附件。')
-            continue
+            print(f'[提醒] 第{week}周没有可打包附件，将生成空 ZIP，避免保留旧版本。')
         for path in files:
             if not path.resolve().is_relative_to(folder.resolve()) or folder.is_symlink():
                 raise ValueError('附件路径指向周作业目录以外，停止打包')
@@ -263,6 +368,7 @@ def export_excel(root, state, roster=None, assignment=None):
     from openpyxl import Workbook, load_workbook
     from openpyxl.styles import Font, PatternFill
     records = [r for r in state.values() if not r['sid'] or in_scope(r['sid'])]
+    selected = latest_submissions(state)
     students = read_roster(roster) if roster else {}
     roster_ids = set(students)
     previous_submitted = set()
@@ -301,7 +407,7 @@ def export_excel(root, state, roster=None, assignment=None):
     summary = wb.active
     summary.title = '提交统计'
     summary.append(['姓名', '学号'] + [f'第{n}周' for n in numbers] + ['已交周数', '备注'])
-    submitted = previous_submitted | {(r['sid'], r['number']) for r in records if r['status'] == '已交'}
+    submitted = previous_submitted | {(r['sid'], r['number']) for r in records if has_submission(r)}
     for sid, name in students.items():
         marks = ['已交' if (sid, n) in submitted else None for n in numbers]
         notes = [n for n in previous_notes.get(sid, '').split('；') if n]
@@ -313,11 +419,18 @@ def export_excel(root, state, roster=None, assignment=None):
             notes.append('邮件姓名与名单或其他提交不一致')
         summary.append([name, sid] + marks + [marks.count('已交'), '；'.join(dict.fromkeys(notes))])
     detail = wb.create_sheet('邮件明细')
-    detail.append(['作业周次', '学号', '姓名', '状态', '邮件时间', '发件人', '主题', '附件数量', '附件相对路径', '超大附件待处理'])
+    detail.append(['作业周次', '学号', '姓名', '状态', '邮件时间', '发件人', '主题', '附件数量', '附件相对路径', '超大附件待处理', '采用情况'])
     for r in records:
         pending = '\n'.join(f"{task['id']}：{task['error']}" for task in r.get('large_attachments', [])
                             if task['status'] != '已下载')
-        detail.append([r['number'], r['sid'], r['name'], r['status'], r['date'], r['sender'], r['subject'], len(r['files']), '\n'.join(r['files']), pending])
+        chosen = any(state[key] is r for key in selected)
+        disposition = '采用：最后一次合法提交' if chosen else ('历史提交：不采用' if legal_submission(r) else '不符合 PDF 收取要求')
+        detail.append([r['number'], r['sid'], r['name'], r['status'], r['date'], r['sender'], r['subject'], len(r['files']), '\n'.join(r['files']), pending, disposition])
+    issues = collection_issues([r for r in records if not legal_submission(r) or any(state[key] is r for key in selected)])
+    errors = wb.create_sheet('收取异常')
+    errors.append(['作业周次', '学号', '姓名', '提交认定', '异常原因', '邮件主题', '邮件时间'])
+    for issue in issues:
+        errors.append(issue)
     for ws in wb:
         ws.freeze_panes = 'C2'
         ws.auto_filter.ref = ws.dimensions
@@ -334,6 +447,15 @@ def export_excel(root, state, roster=None, assignment=None):
     temporary = root / '作业统计.tmp.xlsx'
     wb.save(temporary)
     temporary.replace(destination)
+    lines = ['作业收取异常记录（仅本地保存）',
+             '有附件提交证据即计为已交；下载失败、非 PDF 和无附件问题在此单独记录。',
+             '以下为当前待处理项；重新导出时更新，已解决项不再列出。', '']
+    for week, sid, name, mark, reason, subject, sent_at in issues:
+        lines.extend([f'第{week}周 | {sid} {name} | {mark}',
+                      f'原因：{reason}', f'主题：{subject}', f'邮件时间：{sent_at}', ''])
+    if not issues:
+        lines.append('没有待处理的收取异常。')
+    (root / '收取异常记录.txt').write_text('\n'.join(lines), encoding='utf-8-sig')
     print(f'统计已保存：{destination}')
 
 
@@ -396,7 +518,10 @@ def main():
             pack_homework(root, state, record['number'])
             print(f"[补录完成] {record['subject']}")
         elif args.retry_large:
-            for record in state.values():
+            for key in sorted(state, key=lambda k: submission_order(k, state[k]), reverse=True):
+                record = state[key]
+                if key not in latest_submissions(state):
+                    continue
                 if not record.get('large_attachments') or (args.assignment and record['number'] != args.assignment):
                     continue
                 process_tasks(root, record, attachment_folder(root, record),

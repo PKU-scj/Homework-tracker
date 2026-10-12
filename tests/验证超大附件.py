@@ -4,6 +4,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+import zipfile
 from email.message import EmailMessage
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'scripts'))
 import 超大附件 as large
-from 收作业 import collect, import_pdf, attachment_folder, export_excel, pack_homework, parse_subject
+from 收作业 import collect, import_pdf, attachment_folder, export_excel, pack_homework, parse_subject, latest_submissions
 
 
 ENTRY = 'https://mail.qq.com/cgi-bin/ftnExs_download?k=test&code=abc'
@@ -81,6 +82,59 @@ class LargeAttachmentTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.target = self.root / 'download.pdf'
+
+    def test_latest_submission_by_date_then_numeric_uid(self):
+        def record(day, **extra):
+            return dict(number=4, sid='2600015447', name='示例甲',
+                        date=f'Tue, {day:02d} Sep 2026 12:00:00 +0800',
+                        files=[], pdf_attachment_names=['作业.pdf'], **extra)
+        state = {'mail|10': record(2), 'mail|9': record(2), 'mail|11': record(1)}
+        self.assertEqual(latest_submissions(state), {'mail|10'})
+        state['empty|12'] = dict(record(3), pdf_attachment_names=[])
+        state['zip|13'] = dict(record(4), pdf_attachment_names=[], large_attachments=[
+            {'error': 'QQ 分享文件不是 PDF（可能为 ZIP 压缩包）'}])
+        self.assertEqual(latest_submissions(state), {'mail|10'})
+        state['failed|14'] = dict(record(5), pdf_attachment_names=[], large_attachments=[
+            {'error': '下载连接失败'}])
+        self.assertEqual(latest_submissions(state), {'failed|14'})
+        state['other-week'] = dict(record(6), number=3)
+        state['other-student'] = dict(record(6), sid='2600015448')
+        self.assertEqual(latest_submissions(state), {'failed|14', 'other-week', 'other-student'})
+
+    def test_collect_and_pack_only_latest_valid_email(self):
+        messages = {}
+        for uid, kind in ((1, 'pdf'), (2, 'pdf'), (3, 'empty'), (4, 'broken'), (5, 'zip'), (6, 'pdf')):
+            msg = message('请查收', ordinary=kind == 'pdf')
+            msg['Date'] = f'Tue, {(1 if uid == 6 else uid):02d} Sep 2026 12:00:00 +0800'
+            if kind in ('broken', 'zip'):
+                msg.add_attachment(b'invalid', maintype='application', subtype='octet-stream',
+                                   filename='作业.pdf' if kind == 'broken' else '作业.zip')
+            if uid == 2:
+                msg.add_attachment(b'%PDF-1.4\n%%EOF\n', maintype='application', subtype='pdf', filename='第二页.pdf')
+            messages[str(uid).encode()] = msg
+        class ManyIMAP(IMAP):
+            def uid(self, action, *args):
+                if action == 'search':
+                    return 'OK', [b'1 5 2 6 4 3']
+                return 'OK', [(b'BODY[]', messages[args[0]].as_bytes())]
+        args = SimpleNamespace(mailbox='INBOX', server='imap.qq.com', email='test@qq.com',
+                               since=None, assignment=3, large_timeout=120, large_max_mb=10240)
+        state = {}
+        collect(ManyIMAP(None), args, self.root, state)
+        self.assertEqual({k.rsplit('|', 1)[-1] for k in latest_submissions(state)}, {'2'})
+        self.assertEqual(len(list(self.root.rglob('*.pdf'))), 2)
+        # 不把历史残留文件或手动放入的无记录文件混入最终压缩包。
+        orphan = self.root / '第3周作业' / '旧文件.pdf'
+        orphan.write_bytes(PDF)
+        archives = pack_homework(self.root, state, 3)
+        with zipfile.ZipFile(archives[0]) as archive:
+            self.assertEqual(len(archive.namelist()), 2)
+            self.assertNotIn('旧文件.pdf', archive.namelist())
+        chosen = state[next(iter(latest_submissions(state)))]
+        chosen['files'] = []
+        pack_homework(self.root, state, 3)
+        with zipfile.ZipFile(archives[0]) as archive:
+            self.assertEqual(archive.namelist(), [])
 
     def test_mime_html_entities_and_duplicates(self):
         msg = message()
@@ -328,6 +382,33 @@ class LargeAttachmentTests(unittest.TestCase):
         self.assertEqual(record['status'], '已交')
         self.assertEqual(record['large_attachments'], [])
 
+    def test_non_pdf_attachment_counts_but_empty_email_does_not(self):
+        from openpyxl import load_workbook
+        for attached in (False, True):
+            msg = message('请查收作业')
+            if attached:
+                msg.add_attachment(b'example', maintype='application', subtype='zip', filename='作业.zip')
+            state = {}
+            record = self.run_collect(msg, state)
+            export_excel(self.root, state, assignment=3)
+            wb = load_workbook(self.root / '作业统计.xlsx')
+            self.assertEqual(wb['提交统计'].cell(2, 3).value, '已交' if attached else None)
+            self.assertEqual(wb['收取异常'].cell(2, 4).value, '已交' if attached else '待核对')
+            wb.close()
+
+    def test_ordinary_attachment_write_failure_keeps_submission_evidence(self):
+        from openpyxl import load_workbook
+        state = {}
+        with patch.object(Path, 'write_bytes', side_effect=OSError('disk failure')):
+            record = self.run_collect(message('请查收', ordinary=True), state)
+        self.assertEqual(record['status'], '附件收取失败')
+        self.assertEqual(record['files'], [])
+        export_excel(self.root, state, assignment=3)
+        wb = load_workbook(self.root / '作业统计.xlsx')
+        self.assertEqual(wb['提交统计'].cell(2, 3).value, '已交')
+        self.assertIn('OSError', wb['收取异常'].cell(2, 5).value)
+        wb.close()
+
     def test_import_rejects_invalid_pdf_and_unknown_task(self):
         state = {}
         record = self.run_collect(message('超大附件，无链接'), state)
@@ -345,13 +426,19 @@ class LargeAttachmentTests(unittest.TestCase):
         record = self.run_collect(message('超大附件，无链接'), state)
         export_excel(self.root, state, assignment=3)
         wb = load_workbook(self.root / '作业统计.xlsx')
-        self.assertIsNone(wb['提交统计'].cell(2, 3).value)
+        self.assertEqual(wb['提交统计'].cell(2, 3).value, '已交')
+        self.assertEqual(wb['收取异常'].cell(2, 4).value, '已交')
+        self.assertIn('未识别到下载链接', (self.root / '收取异常记录.txt').read_text(encoding='utf-8-sig'))
         self.assertIn('未识别到下载链接', wb['邮件明细'].cell(2, 10).value)
         wb.close()
+        site = build_site(self.root / '作业统计.xlsx', self.root / 'site')
+        self.assertEqual(site['students'][0]['submitted'], [3])
+        self.assertNotIn('未识别到下载链接', (self.root / 'site/index.html').read_text(encoding='utf-8'))
         self.target.write_bytes(PDF)
         import_pdf(self.root, state, record['large_attachments'][0]['id'], self.target, attachment_folder)
         export_excel(self.root, state, assignment=3)
         archives = pack_homework(self.root, state, 3)
+        self.assertIn('没有待处理', (self.root / '收取异常记录.txt').read_text(encoding='utf-8-sig'))
         self.assertEqual(len(archives), 1)
         site = build_site(self.root / '作业统计.xlsx', self.root / 'site')
         self.assertEqual(site['students'][0]['submitted'], [3])
