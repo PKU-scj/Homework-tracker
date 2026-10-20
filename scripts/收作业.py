@@ -169,6 +169,7 @@ def collect(client, args, root, state):
     if status != 'OK':
         raise RuntimeError('搜索邮件失败')
     queue = []
+    email_records = {}
     for uid in data[0].split():
         try:
             status, response = client.uid('fetch', uid, '(BODY.PEEK[HEADER.FIELDS (SUBJECT DATE)])')
@@ -207,6 +208,7 @@ def collect(client, args, root, state):
             if parsed:
                 number, sid, name = parsed
                 record.update(number=number, sid=sid, name=name, status='无PDF附件')
+                email_records[key] = record
                 record['attachment_names'] = [part.get_filename() or '未命名附件'
                                               for part in msg.walk() if not part.is_multipart()
                                               and (part.get_filename() or part.get_content_disposition() == 'attachment')]
@@ -277,6 +279,8 @@ def collect(client, args, root, state):
                 save_json(root / '收取记录.json', state)
             print(f'[失败] 邮件 UID {uid.decode()}：{exc}；下次运行会重试')
     write_pending(root, state)
+    from 整理学生邮箱 import organize
+    organize(root, email_records)
 
 
 def pack_homework(root, state, assignment=None):
